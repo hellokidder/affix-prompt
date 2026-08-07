@@ -2,7 +2,7 @@
 
 pi 扩展：transcript 中「用户输入消息」的 Affix 吸顶（类似 antd Affix）。
 
-## 功能（v0.0.3：所有 user 消息统一的「剥落 + 接管」模型）
+## 功能（v0.0.2：所有 user 消息统一的「剥落 + 接管」模型）
 
 - **每条 user 消息一视同仁**：触顶 → 剥落（固定副本 = 该消息真实渲染行的前 h 行，
   `h = clamp(scrollTop − start, 0, H)`）→ 完全吸顶（与渲染组件同高同内容）→
@@ -24,7 +24,7 @@ pi 扩展：transcript 中「用户输入消息」的 Affix 吸顶（类似 antd
 - 吸顶高度：`h = clamp(scrollTop − start_active, 0, H_active)`。
 - 前进接管：`scrollTop ≥ start_{i+1} + H_i`（下一条消息顶滚出整个 pin 高度）。
 - 后退交回：`scrollTop < start_i`（当前消息顶回到视口顶以下）。
-- v0.0.1/v0.0.2 的「缩略单行 pin」「底部短回答置空」已删除（统一模型不再需要）。
+- v0.0.1 的「缩略单行 pin」「底部短回答置空」已删除（统一模型不再需要）。
 
 ## 安装
 
