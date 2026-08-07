@@ -1,0 +1,18 @@
+{
+  "name": "affix-prompt",
+  "version": "0.0.1",
+  "description": "pi 扩展：transcript 中「用户输入消息」的 Affix 吸顶（类似 antd Affix），fullscreen TUI 模式",
+  "type": "module",
+  "main": "index.ts",
+  "piConfig": {
+    "configDir": ".pi"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typescript": "^5"
+  }
+}
