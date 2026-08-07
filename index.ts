@@ -76,13 +76,18 @@ interface UserMsg {
   text: string;
 }
 
-/** 吸顶条目标状态（用于检测变化 & 离散切换补偿） */
-interface BarState {
+/** 吸顶条目标状态（渲染时即时派生；用于检测离散变化 & 切换补偿） */
+interface BarTarget {
   mode: "reveal" | "pin" | "none";
   height: number;
   text: string;
-  lines: string[] | undefined; // reveal 内容引用：重建后引用变化 → 强制重绘
+  lines: string[]; // reveal 内容引用：重建后引用变化 → 强制重绘
 }
+
+/** 空 lines 的共享引用（pin/none 用；避免每帧新数组导致状态比对误判） */
+const NO_LINES: string[] = [];
+/** none 目标的共享引用 */
+const NONE_TARGET: BarTarget = { mode: "none", height: 0, text: "", lines: NO_LINES };
 
 function loadEnabled(): boolean {
   try {
@@ -103,52 +108,26 @@ function saveEnabled(enabled: boolean): void {
 }
 
 /**
- * 吸顶条组件。两种内容模式：
- *   - reveal（首条 user 消息）：直接复用 transcript 内该消息的真实渲染行，
- *     显示前 h 行（0..H 动态高度）→ 与渲染组件同高同内容、跟随主题；
+ * 吸顶条组件。内容在 render 时即时派生（computeTarget 直接读当前 scrollTop），
+ * 消除「布局先量吸顶条、后跑 updateLayout」造成的 1 帧滞后 → 剥落/坍缩无抽搐。
+ *   - reveal（首条 user 消息）：复用 transcript 内该消息的真实渲染行，前 h 行；
  *   - pin（后续消息，v0.0.1 遗留）：截断单行的 3 行气泡。
  * 空态返回 0 行（不占位）。
  */
 class AffixPromptBar {
-  private revealLines: string[] = [];
-  private revealRows = 0;
-  private pinText = "";
   private pinCached: string[] | undefined;
   private pinCachedWidth: number | undefined;
+  private pinCachedText: string | undefined;
   private pinCachedFp: string | undefined;
   lastWidth = 0;
+  /** 上一帧实际渲染高度（pin 迟滞边界 & 封顶用；初始 3 = v0.0.1 边界） */
+  renderedHeight = PIN_HEIGHT;
 
   constructor(
     private readonly getUi: () => ExtensionUIContext | undefined,
     private readonly getContentWidth: (width: number) => number,
+    private readonly computeTarget: () => BarTarget,
   ) {}
-
-  /** reveal：显示首条 user 消息真实渲染行的前 rows 行 */
-  setReveal(lines: string[], rows: number): void {
-    this.revealLines = lines;
-    this.revealRows = Math.max(0, Math.min(Math.floor(rows), lines.length));
-    this.pinText = "";
-    this.pinCached = undefined;
-  }
-
-  /** pin：后续消息的缩略吸顶（3 行截断单行） */
-  setPin(text: string): void {
-    this.revealLines = [];
-    this.revealRows = 0;
-    this.pinText = text;
-    this.pinCached = undefined;
-  }
-
-  clear(): void {
-    this.setReveal([], 0);
-  }
-
-  /** 当前渲染高度（布局给吸顶条的高度 = 行数） */
-  height(): number {
-    if (this.revealRows > 0 && this.revealLines.length > 0) return this.revealRows;
-    if (this.pinText.length > 0) return PIN_HEIGHT;
-    return 0;
-  }
 
   /** 主题指纹：pin 渲染缓存比对用；主题切换后返回不同字符串 → 触发重建 */
   private fingerprint(): string {
@@ -171,30 +150,39 @@ class AffixPromptBar {
 
   render(width: number): string[] {
     this.lastWidth = width;
-    if (this.revealRows > 0 && this.revealLines.length > 0) {
+    const target = this.computeTarget();
+    let lines: string[] = [];
+    if (target.mode === "reveal" && target.lines.length > 0) {
       // reveal：transcript 内真实渲染行的前 h 行（同宽同内容，高度 = 行数）
-      return this.revealLines.slice(0, this.revealRows);
-    }
-    if (this.pinText.length > 0 && width > 1) {
+      const rows = Math.min(target.height, target.lines.length);
+      if (rows > 0) lines = target.lines.slice(0, rows);
+    } else if (target.mode === "pin" && target.text.length > 0 && width > 1) {
       // pin：按 transcript 内容宽度渲染（与 reveal / 原文气泡对齐），恒 3 行
       const cw = this.getContentWidth(width);
       const fp = this.fingerprint();
-      let lines = this.pinCached;
-      if (!lines || this.pinCachedWidth !== cw || this.pinCachedFp !== fp) {
+      if (
+        !this.pinCached ||
+        this.pinCachedWidth !== cw ||
+        this.pinCachedText !== target.text ||
+        this.pinCachedFp !== fp
+      ) {
         this.pinCachedWidth = cw;
+        this.pinCachedText = target.text;
         this.pinCachedFp = fp;
         try {
-          const singleLine = truncateToWidth(this.pinText, Math.max(4, cw - 4));
+          const singleLine = truncateToWidth(target.text, Math.max(4, cw - 4));
           lines = new UserMessageComponent(singleLine).render(cw);
           if (lines.length === 0) lines = ["", "", ""];
         } catch {
           lines = ["", "", ""];
         }
         this.pinCached = lines;
+      } else {
+        lines = this.pinCached;
       }
-      return lines;
     }
-    return [];
+    this.renderedHeight = lines.length;
+    return lines;
   }
 }
 
@@ -210,12 +198,16 @@ export default function (pi: ExtensionAPI) {
       const sv = getTranscript();
       return sv && typeof sv.getContentWidth === "function" ? sv.getContentWidth(w) : w;
     },
+    () => {
+      const sv = getTranscript();
+      return sv ? computeTarget(sv) : NONE_TARGET;
+    },
   );
   (bar as any)[BAR_MARK] = true; // 布局里识别吸顶条的标记（/reload 后也能认出来）
 
   let index: UserMsg[] = []; // user 消息区间表 [start, end) × 文本
   let firstLines: string[] = []; // 首条 user 消息的真实渲染行（reveal 复用，同高同内容）
-  let lastBarState: BarState = { mode: "none", height: 0, text: "", lines: undefined };
+  let lastBarState: BarTarget = { ...NONE_TARGET };
   let lastContentHeight: number | undefined;
   let lastWidth = 0;
   let lastMeasuredTotal = 0; // 最近一次测量的内容总行数（与 layout contentHeight 对比自检）
@@ -405,61 +397,74 @@ export default function (pi: ExtensionAPI) {
   }
 
   /**
-   * 查表（每帧）：
+   * 目标状态（渲染时即时派生 + refreshAffix 共用同一函数）。
    *   - 首条 user 消息：reveal，h = clamp(scrollTop - start, 0, H)；
-   *     完全吸顶（h = H）后，若后续消息上沿滚入缩略吸顶槽位（v0.0.1 规则）
-   *     则切换为 pin（含底部短回答置空规则）。
-   *   - 离散高度变化（reveal↔pin、pin 出现/消失）→ scrollTo(st + Δ) 补偿，
-   *     内容不跳动；reveal 连续变化自锚定（h 与 scrollTop 同步），无需补偿。
+   *     完全吸顶（h = H）后，若后续消息上沿滚入吸顶条槽位（v0.0.1 规则，
+   *     边界用上一帧实际渲染高度 → 迟滞，避免补偿回越导致乒乓）则切换为 pin
+   *     （含底部短回答置空规则）。
+   *   - reveal 高度直接由当前 scrollTop 派生：布局同帧内 bar 高与滚动位置严格
+   *     同步 → 接缝内容与原文逐行对齐，滚动过程零滞后、无抽搐。
    */
-  function refreshAffix(): void {
-    if (!enabled) return;
-    const sv = getTranscript();
-    if (!sv) return;
+  function computeTarget(sv: any): BarTarget {
     const st = typeof sv.scrollTop === "number" ? sv.scrollTop : 0;
     const contentHeight = sv.contentHeight ?? 0;
     const viewportHeight = sv.viewportHeight ?? 0;
     const maxSt = Math.max(0, contentHeight - viewportHeight);
 
-    let target: BarState = { mode: "none", height: 0, text: "", lines: undefined };
     const first = index[0];
-    if (first && firstLines.length > 0) {
-      const H = first.end - first.start;
-      const d = st - first.start;
-      if (d >= H) {
-        // 首条完全吸顶：查后续消息的缩略吸顶（v0.0.1 规则 + 底部短回答置空）
-        const last = index[index.length - 1];
-        const bottomClear = st >= maxSt - 1 && !!last && last.start <= st && last.end > st;
-        let pin: UserMsg | undefined;
-        if (!bottomClear) {
-          for (let i = index.length - 1; i >= 1; i--) {
-            if (index[i].start + PIN_HEIGHT <= st) {
-              pin = index[i];
-              break;
-            }
+    if (!first || firstLines.length === 0) return NONE_TARGET;
+
+    const H = first.end - first.start;
+    const d = st - first.start;
+    let target: BarTarget = NONE_TARGET;
+
+    if (d >= H) {
+      // 首条完全吸顶：查后续消息的缩略吸顶（v0.0.1 规则 + 底部短回答置空）
+      const last = index[index.length - 1];
+      const bottomClear = st >= maxSt - 1 && !!last && last.start <= st && last.end > st;
+      let pin: UserMsg | undefined;
+      if (!bottomClear) {
+        // 迟滞边界：用上一帧实际渲染高度（pin=3 / reveal=h），
+        // 接管/交回位置由当前模式决定 → 补偿回越不会再次触发切换
+        const barH = bar.renderedHeight;
+        for (let i = index.length - 1; i >= 1; i--) {
+          if (index[i].start + barH <= st) {
+            pin = index[i];
+            break;
           }
         }
-        if (pin) {
-          target = { mode: "pin", height: PIN_HEIGHT, text: pin.text, lines: undefined };
-        } else {
-          target = { mode: "reveal", height: H, text: "", lines: firstLines };
-        }
-      } else if (d > 0) {
-        target = { mode: "reveal", height: d, text: "", lines: firstLines };
       }
+      if (pin) {
+        target = { mode: "pin", height: PIN_HEIGHT, text: pin.text, lines: NO_LINES };
+      } else {
+        target = { mode: "reveal", height: H, text: "", lines: firstLines };
+      }
+    } else if (d > 0) {
+      target = { mode: "reveal", height: d, text: "", lines: firstLines };
     }
 
     if (target.mode === "reveal") {
-      // 怪物 prompt 保护：给 transcript 至少保留 MIN_TRANSCRIPT_ROWS 行
-      const capped = Math.max(0, Math.min(target.height, viewportHeight - MIN_TRANSCRIPT_ROWS));
-      if (capped <= 0) {
-        target = { mode: "none", height: 0, text: "", lines: undefined };
-      } else {
-        target = { ...target, height: Math.floor(capped) };
-      }
+      // 怪物 prompt 保护：给 transcript 至少保留 MIN_TRANSCRIPT_ROWS 行。
+      // 用「总空间 - 保底」（与当前 h 无关 → 稳定，不会因 viewport 依赖 h 而振荡）
+      const totalSpace = viewportHeight + bar.renderedHeight;
+      const capped = Math.max(0, Math.min(target.height, totalSpace - MIN_TRANSCRIPT_ROWS));
+      if (capped <= 0) return NONE_TARGET;
+      target = { ...target, height: Math.floor(capped) };
     }
+    return target;
+  }
 
-    // 状态无变化（含 reveal 内容引用）→ 不动（不请求重绘）
+  /**
+   * 离散变化检测（每帧 updateLayout hook + 间隔）：
+   *   - 渲染已即时派生当前状态；这里只在状态变化时处理：
+   *     涉及 pin 的高度变化（reveal↔pin、pin 出现/消失）→ scrollTo(st + Δ) 补偿，
+   *     内容不跳动；reveal↔reveal 连续变化自锚定，无需补偿。
+   */
+  function refreshAffix(): void {
+    if (!enabled) return;
+    const sv = getTranscript();
+    if (!sv) return;
+    const target = computeTarget(sv);
     const prev = lastBarState;
     if (
       prev.mode === target.mode &&
@@ -469,22 +474,14 @@ export default function (pi: ExtensionAPI) {
     ) {
       return;
     }
-
-    // 应用目标状态
-    if (target.mode === "reveal") bar.setReveal(target.lines ?? [], target.height);
-    else if (target.mode === "pin") bar.setPin(target.text);
-    else bar.clear();
     lastBarState = target;
-
-    // 离散切换补偿：仅涉及 pin 的高度变化需要；reveal↔reveal 自锚定不需要
     const delta = target.height - prev.height;
     if (delta !== 0 && (prev.mode === "pin" || target.mode === "pin")) {
-      if (typeof sv.scrollTo === "function") sv.scrollTo(st + delta);
+      if (typeof sv.scrollTo === "function") sv.scrollTo(sv.scrollTop + delta);
     }
-
     capturedTui?.requestRender?.();
     dlog(
-      `state=${target.mode} h=${target.height}${target.mode === "pin" ? ` text=${JSON.stringify(target.text)}` : ""} scrollTop=${st}${delta !== 0 ? ` Δ=${delta}${prev.mode === "pin" || target.mode === "pin" ? " compensated" : ""}` : ""} contentHeight=${contentHeight} viewport=${viewportHeight}`,
+      `state=${target.mode} h=${target.height}${target.mode === "pin" ? ` text=${JSON.stringify(target.text)}` : ""} scrollTop=${sv.scrollTop}${delta !== 0 ? ` Δ=${delta}${prev.mode === "pin" || target.mode === "pin" ? " compensated" : ""}` : ""} rendered=${bar.renderedHeight} contentHeight=${sv.contentHeight} viewport=${sv.viewportHeight}`,
     );
   }
 
@@ -551,7 +548,7 @@ export default function (pi: ExtensionAPI) {
     capturedTui = undefined;
     index = [];
     firstLines = [];
-    lastBarState = { mode: "none", height: 0, text: "", lines: undefined };
+    lastBarState = { ...NONE_TARGET };
     lastMeasuredTotal = 0;
     lastThemeFp = "";
   });
@@ -566,10 +563,10 @@ export default function (pi: ExtensionAPI) {
       enabled = next;
       saveEnabled(enabled);
       if (!enabled) {
-        bar.clear();
+        bar.renderedHeight = PIN_HEIGHT;
         index = [];
         firstLines = [];
-        lastBarState = { mode: "none", height: 0, text: "", lines: undefined };
+        lastBarState = { ...NONE_TARGET };
         lastMeasuredTotal = 0;
       }
       ensureBarInLayout();
