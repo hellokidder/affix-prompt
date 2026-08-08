@@ -2,7 +2,7 @@
 
 **pi 编码 Agent 的「用户消息 Affix 吸顶」扩展** —— 滚动时把当前用户消息（你的 prompt）固定在 transcript 顶部（仅支持 fullscreen TUI 模式）。
 
-[English](README.md) | [中文](README.zh-CN.md)
+[English](../README.md) | [中文](README.zh-CN.md)
 
 ---
 

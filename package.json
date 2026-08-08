@@ -1,6 +1,6 @@
 {
   "name": "affix-prompt",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "pi 扩展：transcript 中「用户输入消息」的 Affix 吸顶（类似 antd Affix），统一 maxRows 缩略模型，fullscreen TUI 模式",
   "type": "module",
   "main": "index.ts",
@@ -24,7 +24,7 @@
     "index.ts",
     "state-machine.ts",
     "README.md",
-    "README.zh-CN.md",
+    "docs/README.zh-CN.md",
     "LICENSE"
   ],
   "engines": {

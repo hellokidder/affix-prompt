@@ -2,7 +2,7 @@
 
 **Affix pinned prompts for the pi coding agent** — keeps the current user message (your prompt) pinned at the top of the transcript while you scroll (fullscreen TUI mode only).
 
-[English](README.md) | [中文](README.zh-CN.md)
+[English](README.md) | [中文](docs/README.zh-CN.md)
 
 ---
 
