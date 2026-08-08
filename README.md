@@ -30,7 +30,7 @@ Clone or copy this repository into the pi extensions directory:
 
 ```bash
 mkdir -p ~/.pi/agent/extensions
-git clone https://github.com/your-org/affix-prompt ~/.pi/agent/extensions/affix-prompt
+git clone https://github.com/hellokidder/affix-prompt ~/.pi/agent/extensions/affix-prompt
 # or: copy index.ts, state-machine.ts into ~/.pi/agent/extensions/affix-prompt/
 ```
 

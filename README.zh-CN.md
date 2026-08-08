@@ -31,7 +31,7 @@
 ```bash
 mkdir -p ~/.pi/agent/extensions
 # 方式 A：克隆本仓库
-# git clone <仓库地址> ~/.pi/agent/extensions/affix-prompt
+git clone https://github.com/hellokidder/affix-prompt ~/.pi/agent/extensions/affix-prompt
 # 方式 B：复制源码文件
 #   把 index.ts 和 state-machine.ts 复制到 ~/.pi/agent/extensions/affix-prompt/
 ```
