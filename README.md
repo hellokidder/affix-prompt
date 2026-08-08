@@ -1,76 +1,97 @@
 # affix-prompt
 
-pi 扩展：transcript 中「用户输入消息」的 Affix 吸顶（类似 antd Affix）。
+**Affix pinned prompts for the pi coding agent** — keeps the current user message (your prompt) pinned at the top of the transcript while you scroll (fullscreen TUI mode only).
 
-## 功能（v0.0.2：所有 user 消息统一的「剥落 + 渐进交回」模型）
+[English](README.md) | [中文](README.zh-CN.md)
 
-- **每条 user 消息一视同仁**：触顶 → 剥落（固定副本 = 该消息真实渲染行的前 h 行，
-  `h = clamp(scrollTop − start, 0, H)`）→ 完全吸顶（与渲染组件同高同内容）→
-  接近下一条时渐进让位。首条消息只是「无前驱」的特例。
-- **渐进三角（pin 永不盖住任何问题）**：`pin 高度 = min(剥落量, 到下一个问题的距离)`。
-  pin 底永不越过下一个问题的顶——**短问题及其回答全程可见**：
-  - 上滚（回看）：上一条的 pin 从 0 随滚动 1:1 长到 H（渐进交回，不再瞬间盖住短问题）
-  - 下滚：pin 在接近下一条时逐渐缩没让位（不再盖住下一个问题的顶部）
-- **前进/后退边界对称（触顶即切换）**，切换点高度连续 → 正常路径零补偿、零乒乓；
-  大跳（PageUp/PageDown）级联逐帧收敛，防御性补偿兜底。
-- **固定副本与 TUI 渲染组件同高同内容**：直接复用消息组件的实时渲染
-  （live UserMessageComponent，同宽同主题），不同高度的消息天然按各自真实高度吸顶。
-- **无跳动、无抽搐**：吸顶高度在渲染时由当前 scrollTop 即时派生（同帧对齐，
-  无 1 帧滞后）。
-- 怪物 prompt（消息高度超过屏幕）封顶，给 transcript 保底 2 行。
+---
 
-## 行为细节
+## What it does
 
-- 触顶边界：`scrollTop = start`（该消息上沿碰触 TUI 上沿），开始剥落。
-- 吸顶高度：`h = min(clamp(scrollTop − start_active, 0, H_active), start_next − scrollTop)`。
-- 前进接管：`scrollTop ≥ start_{k+1}`（下一条触顶即接管）。
-- 后退交回：`scrollTop < start_k`（当前消息顶回到视口顶以下）。
-- v0.0.1 的「缩略单行 pin」「底部短回答置空」已删除（统一模型不再需要）。
+When you scroll up through a long conversation, your own prompts scroll out of view and you lose track of what was asked. **affix-prompt** pins the active user message to the top of the transcript:
 
-## 两种模式
+- **Peel & stick** — as the message scrolls off the top, its off-screen lines are "peeled" into the pin, 1:1 with the scroll. Once fully scrolled off, the pin shows the complete message — same height, same content, same theme.
+- **Takeover** — when the next user message reaches the top, the pin switches to it seamlessly (height jumps are absorbed by a same-frame scroll compensation, so content never jumps).
+- **Hand-back** — scroll back up and the pin hands back to the previous message, with hysteresis to prevent oscillation at takeover boundaries.
+- **Optional truncation** — set a max content-row limit (`maxrows N`); the pin then shows the first N content lines (with padding borders) instead of the full message.
 
-- **自然模式**（默认，`/affix-prompt natural`）：完整内容剥落 + 渐进交回（上文所述全部行为）。
-- **One line 模式**（`/affix-prompt oneline`）：v0.0.1 风格的单行缩略气泡（恒 3 行）——
-  吸顶条显示「最后一条上沿滚入槽位」的 user 消息首行截断；第一条触顶即触发；
-  底部短回答场景（最后一条消息仍可见）置空；出现/消失做 scrollTop 补偿。
+The pinned copy is a **live render of the real message component**, so it always matches the current theme, width, and markdown styling — no hardcoded colors, works with any pi theme.
 
-模式保存在 `~/.pi/agent/affix-prompt.json`（`{ "enabled": true, "mode": "natural" }`），跨会话记忆。
+## Requirements
 
-## 安装
+- pi ≥ 0.84
+- **Only the fullscreen TUI mode is supported** (`--tui-mode fullscreen` or via `/settings`).
+  The regular mode (terminal scrollback) has no layout system to pin into — the extension
+  is inert there (settings still persist and take effect when you switch back to fullscreen).
 
-放在 `~/.pi/agent/extensions/affix-prompt/index.ts`（子目录自动发现），`/reload` 生效。
+## Installation
 
-## 用法
-
-```
-/affix-prompt             切换 开/关
-/affix-prompt on|off      开启/关闭
-/affix-prompt natural     自然模式（完整内容剥落 + 渐进交回）
-/affix-prompt oneline     One line 模式（单行缩略）
-```
-
-状态保存在 `~/.pi/agent/affix-prompt.json`，跨会话记忆。
-
-## 调试
+Clone or copy this repository into the pi extensions directory:
 
 ```bash
-POKEPOKE_AFFIX_DEBUG=1 pi
+mkdir -p ~/.pi/agent/extensions
+git clone https://github.com/your-org/affix-prompt ~/.pi/agent/extensions/affix-prompt
+# or: copy index.ts, state-machine.ts into ~/.pi/agent/extensions/affix-prompt/
 ```
 
-日志写入 `/tmp/affix-prompt-debug.log`（rebuild 测量值 vs contentHeight、状态机切换
-与补偿 Δ）。
+Then run `/reload` in pi (or restart pi).
 
-## 手工 smoke（改版后必做）
+## Usage
 
-1. `/reload` 后进入 fullscreen TUI，发两条不同长度的 prompt（一短一长），等回复。
-2. 向上滚动：prompt 触顶 → 剥落 → 完全吸顶（同高同内容）；继续滚到第二条 prompt 顶：
-   pin 接管为第二条（接管瞬间内容不跳动，pin 高度连续）。
-3. 向下滚动：第二条剥落坍缩 → 交回第一条全高（内容不跳动）。
-4. 三条及以上 prompt、不同高度组合各试一次；PageUp/PageDown 跳跃滚动试一次。
-5. 小屏/大屏、超长首条消息各试一次。
+```
+/affix-prompt               toggle on/off
+/affix-prompt on|off        enable/disable
+/affix-prompt maxrows N     set max content rows (pin shows N content lines, total height N+2)
+/affix-prompt 5             shorthand for "maxrows 5"
+/affix-prompt 0             full mode (no truncation, default)
+```
 
-## 开发
+- **`maxrows 0`** (default): full mode — the pin grows to the message's full height.
+- **`maxrows N`** (N ≥ 1): truncation — the pin shows the first N content lines with symmetric padding borders (like a compact bubble). `maxrows 1` is a single-line bubble.
+
+Settings persist across sessions in `~/.pi/agent/affix-prompt.json`:
+
+```json
+{ "enabled": true, "maxRows": 0 }
+```
+
+> `maxRows` is the number of **content lines**; the pin's total height is `maxRows + 2` (top/bottom padding is handled internally).
+>
+> **Default behavior**: the extension is **enabled by default** with `maxRows: 0` (full mode) — after installation it starts working the first time you enter fullscreen mode. Disable with `/affix-prompt off`.
+
+## Behavior details
+
+- **Peel boundary**: pin starts growing when `scrollTop = message.start` (message top touches the TUI top edge).
+- **Pin height**: `h = clamp(scrollTop − start, 0, min(H, maxRows + 2, totalSpace − 2))` — where H is the message's rendered height and `totalSpace − 2` reserves at least 2 transcript rows (monster-prompt guard).
+- **Takeover**: `scrollTop ≥ start_next` — the next message takes over the pin. Height jumps at handover are absorbed by a same-frame `scrollTo` compensation: content position stays continuous.
+- **Hand-back**: `scrollTop < start − takeoverDrop` (hysteresis) — prevents ping-pong oscillation at the takeover boundary.
+
+## Themes
+
+The pin renders through pi's own `UserMessageComponent`, so colors always come from the **current pi theme** (`userMessageBg`, `userMessageText`, `md*` tokens). No color values are hardcoded — switching themes updates the pin automatically. Any theme that passes pi's schema validation works.
+
+## Known limitations
+
+- **Monster prompts** (taller than the screen): the pin caps at `totalSpace − 2` rows so the transcript always keeps ≥ 2 visible rows.
+- **Truncation mode** (`maxrows N` < message height): the symmetric padding borders occupy 2 rows, so the pin shows `N` content lines; the remainder of the message scrolls in the transcript below.
+- **Images**: user messages with inline terminal images are not specially handled in the pin (rare — user message markdown normally doesn't render images).
+
+## Debugging
 
 ```bash
-pnpm typecheck   # 需在 node_modules 里有 pi 类型（见 tsconfig 注释）
+AFFIX_PROMPT_DEBUG=1 pi
 ```
+
+Logs go to `/tmp/affix-prompt-debug.log` (rebuild measurements, state-machine transitions, compensation deltas).
+
+## Development
+
+```bash
+node --test "tests/**/*.test.ts"   # state-machine unit tests (no pi runtime needed)
+```
+
+The state machine lives in `state-machine.ts` as pure functions with deterministic tests; `index.ts` contains the pi integration (layout hook, scroll compensation, command).
+
+## License
+
+MIT
