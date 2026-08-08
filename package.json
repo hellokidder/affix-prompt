@@ -1,14 +1,24 @@
 {
   "name": "affix-prompt",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "pi 扩展：transcript 中「用户输入消息」的 Affix 吸顶（类似 antd Affix），统一 maxRows 缩略模型，fullscreen TUI 模式",
   "type": "module",
   "main": "index.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hellokidder/affix-prompt.git"
+  },
+  "homepage": "https://github.com/hellokidder/affix-prompt#readme",
+  "bugs": {
+    "url": "https://github.com/hellokidder/affix-prompt/issues"
+  },
   "piConfig": {
     "configDir": ".pi"
   },
   "pi": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
   },
   "files": [
     "index.ts",
