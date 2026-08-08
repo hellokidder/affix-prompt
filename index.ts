@@ -3,16 +3,16 @@
  *
  * 适用：pi 0.84+ 的 fullscreen TUI 模式（--tui-mode fullscreen 或 /settings 里切换）。
  *
- * v0.0.2 行为（所有 user 消息统一的「剥落 + 接管」模型）：
+ * v0.0.2 行为（所有 user 消息统一的「剥落 + 渐进交回」模型）：
  *   - 每条 user 消息一视同仁：触顶 → 剥落（固定副本显示该消息真实渲染行的前 h 行，
  *     h = clamp(scrollTop - start, 0, H)，H = 消息真实渲染高度）→ 完全吸顶
- *     （与渲染组件同高同内容）→ 被下一条消息接管。首条消息只是「无前驱」的特例。
- *   - 前进接管：下一条消息顶滚入 pin 高度（scrollTop ≥ start_{i+1} + H_i）时，
- *     pin 切换为下一条消息，高度连续（h 恰好 = H_i）；仅当下一条更矮时才需补偿。
- *   - 后退交回：当前消息顶回落视口顶以下（scrollTop < start_i，剥落完全坍缩）时，
- *     pin 换回上一条全高。前进/后退边界不同 → 状态式迟滞，补偿回越不触发乒乓。
- *   - 同帧补偿：切换时高度变化 Δ 在 render 内 scrollTo(st + Δ)，pi 布局的
- *     translateBox 在 updateLayout 之后执行 → 内容同一帧校正，零跳动。
+ *     （与渲染组件同高同内容）→ 接近下一条时渐进让位。首条消息只是「无前驱」的特例。
+ *   - 渐进三角：pin 高度 = min(剥落量, 到下一个问题的距离) → pin 底永不越过
+ *     下一个问题的顶——任何问题（含短问题及其回答）永不被 pin 盖住：
+ *     上滚 = 渐进交回（上一条的 pin 从 0 随滚动 1:1 长到 H，内容 2× 下移让位），
+ *     下滚 = pin 缩没让位（接近下一条时 pin 从底部逐渐消失，不再盖住下一个问题）。
+ *   - 前进/后退边界对称（触顶即切换），切换点高度连续 → 正常路径零补偿零乒乓；
+ *     大跳级联/内容变化时防御性 scrollTo 补偿（布局 translateBox 同帧校正）。
  *   - 吸顶条内容 = 消息组件的实时渲染（live UserMessageComponent，同宽同主题），
  *     不同高度的消息天然按各自真实高度吸顶。
  *
@@ -339,16 +339,18 @@ export default function (pi: ExtensionAPI) {
 
   /**
    * 目标状态（render 内即时派生 + 状态机）。每次渲染读当前 scrollTop：
-   *   - 前进接管：active = k 且 scrollTop ≥ start_{k+1} + H_k（下一条顶吸满 pin 高度）
-   *   - 后退交回：active = k 且 scrollTop < start_k（当前消息顶回落视口顶以下）
-   *   - 高度：h = clamp(scrollTop - start_active, 0, H_active)，怪物 prompt 封顶
-   *   - active 变化且高度变化 → 同帧 scrollTo(st + Δ) 补偿（布局 translateBox 校正）
+   *   - 前进接管：scrollTop ≥ start_{k+1}（下一条触顶即接管，两侧高度均从 0 连续）
+   *   - 后退交回：scrollTop < start_k（当前消息顶回落视口顶以下）
+   *   - 高度（渐进三角）：h = min(剥落量, 到下一个问题的距离)
+   *     → pin 底永不越过下一个问题的顶（任何问题永不被盖）；
+   *       上滚表现为渐进交回（pin 从 0 随滚动长到 H），下滚表现为 pin 缩没让位
+   *   - 正常路径 h 连续（零补偿零乒乓）；大跳级联/索引变化时防御性 scrollTo 补偿
    */
   function computeTarget(sv: any): BarTarget {
     const st = typeof sv.scrollTop === "number" ? sv.scrollTop : 0;
     const viewportHeight = sv.viewportHeight ?? 0;
 
-    // —— 状态机（状态式迟滞：前进/后退边界不同，补偿回越不乒乓）——
+    // —— 状态机（前进/后退边界对称：触顶切换，切换点 h 连续）——
     if (index.length === 0) {
       active = 0;
     } else if (active === 0) {
@@ -361,20 +363,24 @@ export default function (pi: ExtensionAPI) {
           active -= 1; // 后退交回（1 → 0 = none）
         } else if (active < index.length) {
           const next = index[active]; // 下一条（0-based = active）
-          const H = msg.end - msg.start;
-          if (st >= next.start + H) active += 1; // 前进接管
+          if (st >= next.start) active += 1; // 前进接管（触顶即接管）
         }
       } else {
         active = 0;
       }
     }
 
-    // —— 高度：h = clamp(st - start_active, 0, H_active)，封顶保底 ——
+    // —— 高度：h = min(剥落量, 到下一个问题的距离)，怪物 prompt 封顶 ——
     let target: BarTarget = NONE_TARGET;
     if (active >= 1 && active <= index.length) {
       const msg = index[active - 1];
       const H = msg.end - msg.start;
-      let h = Math.max(0, Math.min(st - msg.start, H));
+      let h = Math.max(0, Math.min(st - msg.start, H)); // 剥落/吸顶
+      if (active < index.length && st < index[active].start) {
+        // 渐进三角：pin 底不越过下一个问题的顶 → 任何问题永不被盖；
+        // 上滚=渐进交回（pin 从 0 长），下滚=pin 缩没让位
+        h = Math.min(h, index[active].start - st);
+      }
       // 怪物 prompt 保护：给 transcript 至少保留 MIN_TRANSCRIPT_ROWS 行
       // （用「总空间 - 保底」，与当前 h 无关 → 稳定，不会自指振荡）
       const totalSpace = viewportHeight + bar.renderedHeight;
@@ -384,7 +390,7 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
-    // —— 离散切换补偿（仅 active 变化且高度变化；reveal 连续变化自锚定）——
+    // —— 防御性补偿（正常路径 h 连续无跳变；大跳级联/内容变化时兜底）——
     if (active !== lastActive) {
       const delta = target.height - bar.renderedHeight;
       if (delta !== 0 && typeof sv.scrollTo === "function") {
