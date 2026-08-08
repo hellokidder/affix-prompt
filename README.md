@@ -27,6 +27,15 @@ pi 扩展：transcript 中「用户输入消息」的 Affix 吸顶（类似 antd
 - 后退交回：`scrollTop < start_k`（当前消息顶回到视口顶以下）。
 - v0.0.1 的「缩略单行 pin」「底部短回答置空」已删除（统一模型不再需要）。
 
+## 两种模式
+
+- **自然模式**（默认，`/affix-prompt natural`）：完整内容剥落 + 渐进交回（上文所述全部行为）。
+- **One line 模式**（`/affix-prompt oneline`）：v0.0.1 风格的单行缩略气泡（恒 3 行）——
+  吸顶条显示「最后一条上沿滚入槽位」的 user 消息首行截断；第一条触顶即触发；
+  底部短回答场景（最后一条消息仍可见）置空；出现/消失做 scrollTop 补偿。
+
+模式保存在 `~/.pi/agent/affix-prompt.json`（`{ "enabled": true, "mode": "natural" }`），跨会话记忆。
+
 ## 安装
 
 放在 `~/.pi/agent/extensions/affix-prompt/index.ts`（子目录自动发现），`/reload` 生效。
@@ -34,9 +43,10 @@ pi 扩展：transcript 中「用户输入消息」的 Affix 吸顶（类似 antd
 ## 用法
 
 ```
-/affix-prompt       切换 开/关
-/affix-prompt on    开启
-/affix-prompt off   关闭
+/affix-prompt             切换 开/关
+/affix-prompt on|off      开启/关闭
+/affix-prompt natural     自然模式（完整内容剥落 + 渐进交回）
+/affix-prompt oneline     One line 模式（单行缩略）
 ```
 
 状态保存在 `~/.pi/agent/affix-prompt.json`，跨会话记忆。

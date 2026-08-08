@@ -34,9 +34,10 @@
  * 扩展是进程内加载的，改文件后需 /reload 或重启 pi 才生效。
  *
  * 用法：
- *   /affix-prompt       切换 开/关
- *   /affix-prompt on    开启
- *   /affix-prompt off   关闭
+ *   /affix-prompt            切换 开/关
+ *   /affix-prompt on|off     开启/关闭
+ *   /affix-prompt natural    自然模式（完整内容剥落 + 渐进交回）
+ *   /affix-prompt oneline    One line 模式（单行缩略，v0.0.1 风格）
  * 状态保存在 ~/.pi/agent/affix-prompt.json，跨会话记忆。
  */
 
@@ -45,7 +46,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 import { UserMessageComponent, type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { Text, VStack } from "@earendil-works/pi-tui";
+import { Text, truncateToWidth, VStack } from "@earendil-works/pi-tui";
 
 const STATE_FILE = join(homedir(), ".pi", "agent", "affix-prompt.json");
 const CAPTURE_WIDGET_KEY = "__affix_prompt_capture";
@@ -53,6 +54,7 @@ const BAR_MARK = "__affixPromptBar";
 const CHECK_INTERVAL_MS = 400; // 内容/宽度/主题变化检测
 const REBUILD_DELAY_MS = 120; // 重建区间表的节流（越短越不容易用到旧表）
 const MIN_TRANSCRIPT_ROWS = 2; // 怪物 prompt 封顶时给 transcript 保底行数
+const PIN_HEIGHT = 3; // One line 模式缩略气泡高度（pad+内容+pad）
 
 /** 运行时结构（pi 内部 layoutRoot / Stack.entries 的形状） */
 interface StackEntryLike {
@@ -77,58 +79,117 @@ interface UserMsg {
 
 /** 吸顶条目标（render 时即时派生） */
 interface BarTarget {
-  mode: "active" | "none";
+  mode: "active" | "pin" | "none";
   height: number;
-  comp: UserMessageComponent | undefined;
+  comp: UserMessageComponent | undefined; // natural 模式：live 组件
+  text: string; // oneline 模式：截断文本
 }
 
-const NONE_TARGET: BarTarget = { mode: "none", height: 0, comp: undefined };
+const NONE_TARGET: BarTarget = { mode: "none", height: 0, comp: undefined, text: "" };
 
-function loadEnabled(): boolean {
+/** 持久化状态（~/.pi/agent/affix-prompt.json） */
+interface AffixState {
+  enabled: boolean;
+  mode: "natural" | "oneline";
+}
+
+function loadState(): AffixState {
   try {
-    const parsed = JSON.parse(readFileSync(STATE_FILE, "utf8")) as { enabled?: boolean };
-    return parsed.enabled !== false;
+    const parsed = JSON.parse(readFileSync(STATE_FILE, "utf8")) as Partial<AffixState>;
+    return {
+      enabled: parsed.enabled !== false,
+      mode: parsed.mode === "oneline" ? "oneline" : "natural",
+    };
   } catch {
-    return true;
+    return { enabled: true, mode: "natural" };
   }
 }
 
-function saveEnabled(enabled: boolean): void {
+function saveState(state: AffixState): void {
   try {
     mkdirSync(join(homedir(), ".pi", "agent"), { recursive: true });
-    writeFileSync(STATE_FILE, JSON.stringify({ enabled }, null, 2));
+    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   } catch {
     /* 写失败不阻塞 */
   }
 }
 
 /**
- * 吸顶条组件。内容在 render 时即时派生（computeTarget 读当前 scrollTop + 状态机），
- * 显示「当前 user 消息」实时渲染行的前 h 行（0..H 动态高度，完全吸顶时与原文同高）。
+ * 吸顶条组件。内容在 render 时即时派生（computeTarget 读当前 scrollTop + 状态机）。
+ *   - natural 模式：显示「当前 user 消息」实时渲染行的前 h 行（0..H 动态高度）；
+ *   - oneline 模式：截断单行的 3 行缩略气泡（v0.0.1 风格）。
  * 空态返回 0 行（不占位）。
  */
 class AffixPromptBar {
+  private pinCached: string[] | undefined;
+  private pinCachedWidth: number | undefined;
+  private pinCachedText: string | undefined;
+  private pinCachedFp: string | undefined;
   lastWidth = 0;
   /** 上一帧实际渲染高度（离散切换补偿 Δ 的基准） */
   renderedHeight = 0;
 
   constructor(
+    private readonly getUi: () => ExtensionUIContext | undefined,
     private readonly getContentWidth: (width: number) => number,
     private readonly computeTarget: () => BarTarget,
   ) {}
+
+  /** 主题指纹：oneline 缩略气泡渲染缓存比对用；主题切换后重建 */
+  private fingerprint(): string {
+    const ui = this.getUi();
+    if (!ui) return "";
+    try {
+      const t = ui.theme;
+      return [
+        t.fg("userMessageText", "x"),
+        t.bg("userMessageBg", "x"),
+        t.fg("mdHeading", "x"),
+        t.fg("mdLink", "x"),
+        t.fg("mdCode", "x"),
+        t.fg("mdQuote", "x"),
+      ].join("|");
+    } catch {
+      return "";
+    }
+  }
 
   render(width: number): string[] {
     this.lastWidth = width;
     const target = this.computeTarget();
     let lines: string[] = [];
     if (target.mode === "active" && target.comp && target.height > 0) {
+      // natural：实时渲染该消息组件（同宽同主题），取前 h 行；OSC133 由布局绘制时剥除
       const cw = this.getContentWidth(width);
       try {
-        // 实时渲染该消息组件（同宽同主题），取前 h 行；OSC133 标记由布局绘制时剥除
         const all = target.comp.render(cw);
         lines = all.slice(0, Math.min(target.height, all.length));
       } catch {
         lines = [];
+      }
+    } else if (target.mode === "pin" && target.text.length > 0 && width > 1) {
+      // oneline：截断单行气泡（恒 3 行），按 transcript 内容宽度渲染
+      const cw = this.getContentWidth(width);
+      const fp = this.fingerprint();
+      if (
+        !this.pinCached ||
+        this.pinCachedWidth !== cw ||
+        this.pinCachedText !== target.text ||
+        this.pinCachedFp !== fp
+      ) {
+        this.pinCachedWidth = cw;
+        this.pinCachedText = target.text;
+        this.pinCachedFp = fp;
+        try {
+          const singleLine = truncateToWidth(target.text, Math.max(4, cw - 4));
+          lines = new UserMessageComponent(singleLine).render(cw);
+          if (lines.length === 0) lines = ["", "", ""];
+        } catch {
+          lines = ["", "", ""];
+        }
+        this.pinCached = lines;
+      } else {
+        lines = this.pinCached;
       }
     }
     this.renderedHeight = lines.length;
@@ -139,18 +200,22 @@ class AffixPromptBar {
 export default function (pi: ExtensionAPI) {
   let ui: ExtensionUIContext | undefined;
   let capturedTui: AltScreenLike | undefined;
-  let enabled = loadEnabled();
+  const state = loadState();
+  let enabled = state.enabled;
+  let mode: "natural" | "oneline" = state.mode;
   let timer: ReturnType<typeof setInterval> | undefined;
 
   let index: UserMsg[] = []; // user 消息区间表 [start, end) × 组件引用
-  let active = 0; // 当前吸顶消息：0=none，k = index[k-1]
-  let lastActive = -1; // 切换检测（-1 = 未初始化）
+  let active = 0; // natural：当前吸顶消息：0=none，k = index[k-1]
+  let lastActive = -1; // natural：切换检测（-1 = 未初始化）
+  let onelineLastHeight = 0; // oneline：上次目标高度（0 ↔ 3 离散补偿检测）
   let lastContentHeight: number | undefined;
   let lastWidth = 0;
   let lastMeasuredTotal = 0; // 最近一次测量的内容总行数（与 layout contentHeight 对比自检）
   let lastThemeFp = ""; // 主题指纹（吸顶条按主题渲染，变化 → 重建）
 
   const bar = new AffixPromptBar(
+    () => ui,
     (w) => {
       const sv = getTranscript();
       return sv && typeof sv.getContentWidth === "function" ? sv.getContentWidth(w) : w;
@@ -338,7 +403,62 @@ export default function (pi: ExtensionAPI) {
   }
 
   /**
-   * 目标状态（render 内即时派生 + 状态机）。每次渲染读当前 scrollTop：
+   * 目标状态（render 内即时派生）。按模式分支：
+   *   - natural：剥落 + 渐进交回（pin 高度 = min(剥落量, 到下一个问题的距离)）
+   *   - oneline：v0.0.1 单行缩略（最后一条进入 3 行槽位的消息 + 底部短回答置空）
+   */
+  function computeTarget(sv: any): BarTarget {
+    if (mode === "oneline") return computeTargetOneline(sv);
+    return computeTargetNatural(sv);
+  }
+
+  /**
+   * One line 模式（v0.0.1 语义）：吸顶条 = 最后一条「上沿进入槽位」的 user 消息的
+   * 单行缩略气泡（恒 3 行）。
+   *   - 第一条消息触顶（start + 0 ≤ st）即触发；后续消息需滚入 3 行槽位
+   *   - 底部短回答场景（最后一条消息仍可见）置空（原文就在屏幕上，不重复）
+   *   - 0 ↔ 3 离散高度变化 → 同帧 scrollTo(st + Δ) 补偿
+   */
+  function computeTargetOneline(sv: any): BarTarget {
+    const st = typeof sv.scrollTop === "number" ? sv.scrollTop : 0;
+    const contentHeight = sv.contentHeight ?? 0;
+    const viewportHeight = sv.viewportHeight ?? 0;
+    const maxSt = Math.max(0, contentHeight - viewportHeight);
+
+    let current: UserMsg | undefined;
+    for (let i = 0; i < index.length; i++) {
+      const m = index[i];
+      // 第一条：初始上方无占位，触顶即触发；后续消息：滚入吸顶条槽位
+      const offset = i === 0 ? 0 : PIN_HEIGHT;
+      if (m.start + offset <= st) current = m;
+      else break;
+    }
+    // 底部短回答场景（最后一条消息仍可见）置空
+    const last = index[index.length - 1];
+    if (st >= maxSt - 1 && last && last.start <= st && last.end > st) {
+      current = undefined;
+    }
+
+    const target: BarTarget = current
+      ? { mode: "pin", height: PIN_HEIGHT, text: current.text, comp: undefined }
+      : NONE_TARGET;
+
+    // 0 ↔ 3 离散切换补偿（消息间切换高度不变，无需补偿）
+    if (target.height !== onelineLastHeight) {
+      const delta = target.height - bar.renderedHeight;
+      if (delta !== 0 && typeof sv.scrollTo === "function") {
+        sv.scrollTo(st + delta);
+      }
+      dlog(
+        `oneline h=${target.height} Δ=${delta}${delta !== 0 ? " compensated" : ""} scrollTop=${st}->${sv.scrollTop}`,
+      );
+      onelineLastHeight = target.height;
+    }
+    return target;
+  }
+
+  /**
+   * 自然模式目标（render 内即时派生 + 状态机）。每次渲染读当前 scrollTop：
    *   - 前进接管：scrollTop ≥ start_{k+1}（下一条触顶即接管，两侧高度均从 0 连续）
    *   - 后退交回：scrollTop < start_k（当前消息顶回落视口顶以下）
    *   - 高度（渐进三角）：h = min(剥落量, 到下一个问题的距离)
@@ -346,7 +466,7 @@ export default function (pi: ExtensionAPI) {
    *       上滚表现为渐进交回（pin 从 0 随滚动长到 H），下滚表现为 pin 缩没让位
    *   - 正常路径 h 连续（零补偿零乒乓）；大跳级联/索引变化时防御性 scrollTo 补偿
    */
-  function computeTarget(sv: any): BarTarget {
+  function computeTargetNatural(sv: any): BarTarget {
     const st = typeof sv.scrollTop === "number" ? sv.scrollTop : 0;
     const viewportHeight = sv.viewportHeight ?? 0;
 
@@ -386,7 +506,7 @@ export default function (pi: ExtensionAPI) {
       const totalSpace = viewportHeight + bar.renderedHeight;
       h = Math.max(0, Math.min(h, totalSpace - MIN_TRANSCRIPT_ROWS));
       if (h > 0) {
-        target = { mode: "active", height: Math.floor(h), comp: msg.comp };
+        target = { mode: "active", height: Math.floor(h), comp: msg.comp, text: "" };
       }
     }
 
@@ -467,23 +587,47 @@ export default function (pi: ExtensionAPI) {
     index = [];
     active = 0;
     lastActive = -1;
+    onelineLastHeight = 0;
     lastMeasuredTotal = 0;
     lastThemeFp = "";
   });
 
   pi.registerCommand("affix-prompt", {
-    description: "切换「用户输入消息 Affix 吸顶」（fullscreen 模式）。用法: /affix-prompt [on|off]",
+    description:
+      "切换「用户输入消息 Affix 吸顶」（fullscreen 模式）。用法: /affix-prompt [on|off|natural|oneline]",
     handler: async (args, ctx) => {
       ui = ctx.ui;
       captureTui(ctx.ui);
       const arg = args.trim().toLowerCase();
+      // 切模式：/affix-prompt natural|oneline
+      if (arg === "natural" || arg === "oneline") {
+        mode = arg;
+        saveState({ enabled, mode });
+        // 重置状态机（不同模式的切换/补偿状态不通用）
+        index = [];
+        active = 0;
+        lastActive = -1;
+        onelineLastHeight = 0;
+        bar.renderedHeight = 0;
+        ensureBarInLayout();
+        rebuildIndex();
+        capturedTui?.requestRender?.();
+        ctx.ui.notify(
+          mode === "oneline"
+            ? "affix-prompt: 已切换为 One line 模式（单行缩略）"
+            : "affix-prompt: 已切换为自然模式（完整内容剥落）",
+          "info",
+        );
+        return;
+      }
       const next = arg === "on" ? true : arg === "off" ? false : !enabled;
       enabled = next;
-      saveEnabled(enabled);
+      saveState({ enabled, mode });
       if (!enabled) {
         index = [];
         active = 0;
         lastActive = -1;
+        onelineLastHeight = 0;
         lastMeasuredTotal = 0;
       }
       ensureBarInLayout();
@@ -492,7 +636,7 @@ export default function (pi: ExtensionAPI) {
         capturedTui?.requestRender?.();
       }
       ctx.ui.notify(
-        enabled ? "affix-prompt: user 输入 Affix 吸顶已开启" : "affix-prompt: 已关闭",
+        enabled ? `affix-prompt: Affix 吸顶已开启（${mode === "oneline" ? "One line" : "自然"}模式）` : "affix-prompt: 已关闭",
         "info",
       );
     },
