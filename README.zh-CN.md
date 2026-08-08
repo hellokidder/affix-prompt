@@ -26,17 +26,33 @@
 
 ## 安装
 
-克隆或复制本仓库到 pi 扩展目录：
+### 推荐：从 npm 安装（pi 包画廊）
+
+```bash
+pi install npm:affix-prompt
+```
+
+然后在 pi 里执行 `/reload`（或重启 pi）。后续更新：`pi update npm:affix-prompt`。
+
+### 从 git 安装
+
+```bash
+pi install git:github.com/hellokidder/affix-prompt@v1.0.0
+```
+
+### 手动 / 开发模式
+
+克隆或复制本仓库到 pi 扩展目录（适合开发调试时）：
 
 ```bash
 mkdir -p ~/.pi/agent/extensions
-# 方式 A：克隆本仓库
+# 方式 A：克隆仓库
 git clone https://github.com/hellokidder/affix-prompt ~/.pi/agent/extensions/affix-prompt
-# 方式 B：复制源码文件
+# 方式 B：复制源码
 #   把 index.ts 和 state-machine.ts 复制到 ~/.pi/agent/extensions/affix-prompt/
+# 方式 C：符号链接本地开发目录（改完 /reload 即同步）
+#   ln -s /path/to/affix-prompt ~/.pi/agent/extensions/affix-prompt
 ```
-
-然后在 pi 里执行 `/reload`（或重启 pi）。
 
 ## 用法
 

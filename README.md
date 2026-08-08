@@ -26,15 +26,33 @@ The pinned copy is a **live render of the real message component**, so it always
 
 ## Installation
 
-Clone or copy this repository into the pi extensions directory:
+### Recommended: install from npm (pi package gallery)
+
+```bash
+pi install npm:affix-prompt
+```
+
+Then run `/reload` in pi (or restart pi). To update later: `pi update npm:affix-prompt`.
+
+### From git
+
+```bash
+pi install git:github.com/hellokidder/affix-prompt@v1.0.0
+```
+
+### Manual / development
+
+Clone or copy this repository into the pi extensions directory (useful when developing):
 
 ```bash
 mkdir -p ~/.pi/agent/extensions
+# Option A: clone the repository
 git clone https://github.com/hellokidder/affix-prompt ~/.pi/agent/extensions/affix-prompt
-# or: copy index.ts, state-machine.ts into ~/.pi/agent/extensions/affix-prompt/
+# Option B: copy the source files
+#   copy index.ts and state-machine.ts into ~/.pi/agent/extensions/affix-prompt/
+# Option C: symlink a local checkout (auto-syncs on /reload)
+#   ln -s /path/to/affix-prompt ~/.pi/agent/extensions/affix-prompt
 ```
-
-Then run `/reload` in pi (or restart pi).
 
 ## Usage
 
