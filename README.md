@@ -29,10 +29,10 @@ The pinned copy is a **live render of the real message component**, so it always
 ### Recommended: install from npm (pi package gallery)
 
 ```bash
-pi install npm:affix-prompt
+pi install npm:pi-affix-prompt
 ```
 
-Then run `/reload` in pi (or restart pi). To update later: `pi update npm:affix-prompt`.
+Then run `/reload` in pi (or restart pi). To update later: `pi update npm:pi-affix-prompt`.
 
 ### From git
 

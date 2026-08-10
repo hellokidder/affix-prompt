@@ -29,10 +29,10 @@
 ### 推荐：从 npm 安装（pi 包画廊）
 
 ```bash
-pi install npm:affix-prompt
+pi install npm:pi-affix-prompt
 ```
 
-然后在 pi 里执行 `/reload`（或重启 pi）。后续更新：`pi update npm:affix-prompt`。
+然后在 pi 里执行 `/reload`（或重启 pi）。后续更新：`pi update npm:pi-affix-prompt`。
 
 ### 从 git 安装
 
