@@ -4,6 +4,8 @@
 
 [English](../README.md) | [中文](README.zh-CN.md)
 
+> 🔔 **同作者出品**：<img src="../assets/pokepoke-icon.png" width="16" height="16" alt="Poke Poke"> [**Poke Poke**](https://pokepoke.app/) —— macOS 菜单栏小工具，原生支持 **pi**（以及 Claude Code / Cursor / Codex / opencode / Kimi），agent 需要你输入或跑完长任务时主动提醒你，点一下跳回对应终端。[获取 Poke Poke](https://pokepoke.app/)
+
 ---
 
 ## 功能
