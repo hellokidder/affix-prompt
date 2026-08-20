@@ -1,6 +1,6 @@
 {
   "name": "pi-affix-prompt",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Affix-pin the active user prompt at the top of the transcript (antd-style Affix) with unified maxRows truncation — fullscreen TUI mode / 用户输入消息吸顶（类似 antd Affix），统一 maxRows 缩略模型",
   "type": "module",
   "main": "index.ts",
