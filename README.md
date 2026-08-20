@@ -4,7 +4,7 @@
 
 [English](README.md) | [中文](docs/README.zh-CN.md)
 
-> 🔔 **From the same author**: <img src="./assets/pokepoke-icon.png" width="16" height="16" alt="Poke Poke"> [**Poke Poke**](https://pokepoke.app/) — a macOS menu bar app that natively watches your **pi** (and Claude Code / Cursor / Codex / opencode / Kimi) sessions and pokes you when the agent needs input or finishes a long run. [Get Poke Poke](https://pokepoke.app/)
+> <img src="./assets/pokepoke-icon.png" width="16" height="16" alt="Poke Poke"> **From the same author**: [**Poke Poke**](https://pokepoke.app/) — a macOS menu bar app that natively watches your **pi** (and Claude Code / Cursor / Codex / opencode / Kimi) sessions and pokes you when the agent needs input or finishes a long run. [Get Poke Poke](https://pokepoke.app/)
 
 ---
 
