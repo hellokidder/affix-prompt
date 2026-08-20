@@ -235,7 +235,7 @@ class AffixPromptBar {
         try {
           const h = Math.min(target.height, all.length);
           if (h >= all.length) {
-            lines = all.slice(); // 完全吸顶：与消息组件同高同内容
+            lines = all.slice(); // 完全吸顶：与消息组件同高同内容（含首尾 pad）
             lastIsFinal = true;
           } else if (maxRows === 0) {
             lines = all.slice(0, h); // 自然模式：连续文本切片
@@ -289,9 +289,6 @@ export default function (pi: ExtensionAPI) {
   let lastMeasuredTotal = 0; // 最近一次测量的内容总行数（与 layout contentHeight 对比自检）
   let lastSelfCheckHeight: number | undefined; // 自检收敛 guard：同一 contentHeight 只触发一次自检重建
   let structureWarned = false; // 结构异常只向用户报一次
-  /** 子组件渲染行数缓存（增量重建：宽度不变时只对新增/未知组件重算） */
-  let childLineCache = new WeakMap<object, number>();
-  let lastRebuildWidth = 0;
   /** chat 容器引用缓存（rebuild 时用 includes 校验，省去每次 instanceof 扫描） */
   let chatContainer: any;
 
@@ -468,26 +465,27 @@ export default function (pi: ExtensionAPI) {
     }, REBUILD_DELAY_MS);
   }
 
-  /** 子组件渲染行数（增量重建：宽度不变时只对新增/未知组件重算） */
+  /** 子组件渲染行数。
+   *  不在此处做跨 rebuild 的持久缓存：assistant 流式输出、工具执行结果到达、展开/折叠
+   *  都会让组件高度变化，持久缓存（旧版 WeakMap）会返回陈旧高度——后续 user 消息的
+   *  start offset 被低估，pin 提前剥落，与 transcript 内的 padTop 重复一行
+   *  （视觉上「吸顶条上方多了一行」）。Box/Markdown 自带按宽度的渲染缓存，稳定组件
+   *  命中 O(1)，故直接测量即可，无需自建缓存。 */
   function measureLines(c: any, width: number): number {
-    const cached = childLineCache.get(c);
-    if (cached !== undefined) return cached;
-    let h = 0;
     try {
-      h = c.render?.(width)?.length ?? 0;
+      return c.render?.(width)?.length ?? 0;
     } catch {
-      h = 0;
+      return 0;
     }
-    childLineCache.set(c, h);
-    return h;
   }
 
   /**
    * 重建 user 消息区间表：测量 documentContainer 子组件渲染行数。
    * documentContainer.children = [header, loadedResources, chat]（chat 按内容识别，不依赖下标）。
    * 每条 UserMessageComponent 记录 [start, end) 并保存组件引用（供吸顶条实时渲染）。
-   * 增量：已有子组件的行数命中 WeakMap 缓存（Markdown 组件内部也有缓存），
-   * 只有宽度变化或新增组件才真正 render。
+   * 每次 rebuild 都重新测量所有子组件高度（不跨 rebuild 缓存）：Box/Markdown 自带按宽度的
+   * 渲染缓存，稳定组件 O(1) 命中；而 assistant/工具等高度会变化的组件必须重新测量，否则
+   * 陈旧高度会使后续 user 消息的 start 偏移、pin 与 transcript 重复一行。
    */
   function rebuildIndex(): void {
     const sv = getTranscript();
@@ -498,11 +496,6 @@ export default function (pi: ExtensionAPI) {
         ? (sv as any).getContentWidth(bar.lastWidth)
         : bar.lastWidth;
     if (!width) return;
-    // 宽度变化：换行结果整体失效，清缓存全量重算
-    if (width !== lastRebuildWidth) {
-      childLineCache = new WeakMap();
-      lastRebuildWidth = width;
-    }
     const doc = (sv as any).child;
     if (!doc || !Array.isArray(doc.children) || doc.children.length < 3) return;
     const wasEmpty = msgIndex.length === 0; // 冷启动标记（reload/enable/maxRows 变更后）
@@ -656,8 +649,6 @@ export default function (pi: ExtensionAPI) {
     lastMeasuredTotal = 0;
     lastSelfCheckHeight = undefined;
     structureWarned = false;
-    childLineCache = new WeakMap();
-    lastRebuildWidth = 0;
     chatContainer = undefined;
   });
 
